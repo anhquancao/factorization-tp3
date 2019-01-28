@@ -123,11 +123,12 @@ int main(int argc, char ** argv)
 	double * Z2data = (double*)malloc(fact2BlockSize*sizeof(double));
 
 	customGSLmatrixAlloc(Z2block,s3,curS2,curS2, Z2data, fact2BlockSize);
+	
 
 	//Initialize the factor blocks
 	double mult = 1.5;
 	initalizeGSLMatrix(Z1block, mult);
-	initalizeGSLMatrix(Z2block, mult);
+	initalizeGSLMatrix(Z2block, mult);	
 
 	//Allocate the temporary buffer, required during the communications
 	double * tempBuf = (double*)malloc(fact2BlockSize*sizeof(double));
@@ -141,15 +142,15 @@ int main(int argc, char ** argv)
 	Z2update->block = (gsl_block*)malloc(sizeof(gsl_block));
 	double * Z2UpdateData = (double*)malloc(fact2BlockSize*sizeof(double));
 
-	customGSLmatrixAlloc(Z2update,s3,curS2,curS2, Z2UpdateData, fact2BlockSize ); 
-
+	customGSLmatrixAlloc(Z2update,s3,curS2,curS2, Z2UpdateData, fact2BlockSize); 	
+	
 	//For computing computation times
 	double t1, t2; 
 	double tElapsed = 0;
 	
 	//Start the gradient descent!
 	for(int ee = 0; ee<MaxIter; ee++)
-	{
+	{	
 		t1 = MPI_Wtime(); 
 
 		if(ee>0)
@@ -167,26 +168,27 @@ int main(int argc, char ** argv)
 		computeDivDiff(tempX,dataBlockSize,div_term,Z1block,Z2block); //Fill this in
 
 		computeZ1update(div_term, dataBlockSize, Z2block, Z1update); //Fill this in
-		computeZ2update(div_term, dataBlockSize, Z1block, Z2update); //Fill this in
 		
+		computeZ2update(div_term, dataBlockSize, Z1block, Z2update); //Fill this in
+
 		// Update Z1 with Gradient Descent
-		for (int i = 0; i < s1; i++)
+		for (int i = 0; i < curS1; i++)
 		{
 			for (int k = 0; k<s3; k++)
-			{
+			{				
 				Z1block->data[i * Z1block->tda + k] -= eta * Z1update->data[i * Z1update->tda + k];
+				// printf("test %d %d %d\n", i, k, s1);
 			}			
-		}
+		}		
 
 		// Update Z2 with Gradient Descent
-		for (int k = 0; k < s1; k++)
+		for (int k = 0; k < curS1; k++)
 		{
 			for (int j = 0; j < s3; j++)
 			{
 				Z2block->data[k * Z1block->tda + j] -= eta * Z2update->data[k * Z2update->tda + j];
 			}
-		}
-
+		}		
 
     	t2 = MPI_Wtime();
 		tElapsed += t2-t1;
@@ -212,9 +214,8 @@ int main(int argc, char ** argv)
 		if(ee < (MaxIter-1))
 		{
 			// synchronize the updated variables
-			int dest = (processId + 1) % numBlocks; //the process id of the destination: send it to the previous process
-			int src  = (processId - 1) % numBlocks; //the process id of the source: recieve it from the next process
-			
+			int dest = (processId + 1 + numBlocks) % numBlocks; //the process id of the destination: send it to the previous process
+			int src  = (processId - 1 + numBlocks) % numBlocks; //the process id of the source: recieve it from the next process			
 
 			// first send/receive some information -- no need to modify
 			MPI_Status st;
@@ -224,14 +225,13 @@ int main(int argc, char ** argv)
 			Z2info[1] = (int)Z2block->size2;
 			Z2info[2] = (int)Z2block->tda;
 			
-			int Z2infoInc [3];
+			int Z2infoInc [3];		
 
 			MPI_Sendrecv(&(Z2info[0]), 3, MPI_INT,
 	                dest, DSGD_Z2SIZE,
 	                &(Z2infoInc[0]), 3, MPI_INT,
 	                src, DSGD_Z2SIZE,
-	                MPI_COMM_WORLD, &st);
-
+	                MPI_COMM_WORLD, &st);			
 
 			//Now send/receive the Z2 block -- fill in the ??? parts
 			MPI_Sendrecv(Z2block, fact2BlockSize, MPI_DOUBLE,
@@ -247,13 +247,11 @@ int main(int argc, char ** argv)
 
 			Z2update->size1 = Z2infoInc[0];
 			Z2update->size2 = Z2infoInc[1];
-			Z2update->tda   = Z2infoInc[2];
-			
-			
+			Z2update->tda   = Z2infoInc[2];						
 			
 			//form a new part
 			blockI1 = blockI1;
-			blockI2 = (blockI2 - 1) % numBlocks;
+			blockI2 = (blockI2 - 1 + numBlocks) % numBlocks;
 		}
 		
 		t2 = MPI_Wtime();
@@ -265,11 +263,12 @@ int main(int argc, char ** argv)
 
 	}
 	
+	t2 = MPI_Wtime();
 
 	// Finalize the MPI environment.
   	MPI_Finalize();
 
-  	t2 = MPI_Wtime(); 
+  	 
 	long int msec = (long int)(1000*tElapsed);
 	printf("*%ld\n",msec);
 
@@ -284,8 +283,6 @@ int main(int argc, char ** argv)
     gsl_matrix_free(Z1update);
     gsl_matrix_free(Z2update);
     free(div_term);
-
- 
 
 	return 0;
 }
