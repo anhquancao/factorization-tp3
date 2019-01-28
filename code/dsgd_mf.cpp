@@ -50,7 +50,7 @@ void computeZ2update(mtxElm * div_term, int dataBlockSize, gsl_matrix * Z1, gsl_
 int main(int argc, char ** argv)
 {
 	
-	//char * dataPath = argv[1];
+	// char * dataPath = argv[1];
     int s1 = atoi(argv[1]); 
     int s2 = atoi(argv[2]);
     int s3 = atoi(argv[3]);
@@ -63,7 +63,6 @@ int main(int argc, char ** argv)
 
     //don't need to modify here
     const int MaxBlockSize = 5000000;
-
 
 	// Initialize the MPI environment
 	MPI_Init(NULL, NULL);
@@ -82,17 +81,16 @@ int main(int argc, char ** argv)
 
 	// Load the initial data block 
 	char * dataPath = "./data/";
-	
 
 
 	char outPath[1024];
 	sprintf(outPath,"./output/%d_%d_%d/",s1,s2,s3);
 	
-	if(processId == 0)
+	if (processId == 0)
 	{	
 		//create the folder if it doesn't exist
     	char cmd[1024];
-    	sprintf(cmd,"mkdir %s",outPath);
+    	sprintf(cmd,"mkdir %s", outPath);
     	system(cmd);
     }
 	
@@ -107,11 +105,11 @@ int main(int argc, char ** argv)
 
 	char fileName[1024];
 	sprintf(fileName,"%s/blocks_%d_%d_%d/X%d_%d.dat",dataPath,s1,s2,numBlocks,blockI1,blockI2);
+
 	int curS1, curS2;
 	int dataBlockSize = loadDataSparse(fileName,tempX, &curS1, &curS2);
 
 	printf("Process%d: Initial data loaded\n",processId);
-
 
 	// Allocate the matrices, it is a bit different than before, no need to change
 	int fact2BlockSize = 2* ceil(s2/numBlocks) * s3; //paranoid size
@@ -124,9 +122,7 @@ int main(int argc, char ** argv)
 	Z2block->block = (gsl_block*)malloc(sizeof(gsl_block));
 	double * Z2data = (double*)malloc(fact2BlockSize*sizeof(double));
 
-	customGSLmatrixAlloc(Z2block,s3,curS2,curS2, Z2data, fact2BlockSize );
-
-
+	customGSLmatrixAlloc(Z2block,s3,curS2,curS2, Z2data, fact2BlockSize);
 
 	//Initialize the factor blocks
 	double mult = 1.5;
@@ -172,12 +168,24 @@ int main(int argc, char ** argv)
 
 		computeZ1update(div_term, dataBlockSize, Z2block, Z1update); //Fill this in
 		computeZ2update(div_term, dataBlockSize, Z1block, Z2update); //Fill this in
-
-
-		//Update Z1 and Z2 with Gradient Descent
-
-		// TODO
 		
+		// Update Z1 with Gradient Descent
+		for (int i = 0; i < s1; i++)
+		{
+			for (int k = 0; k<s3; k++)
+			{
+				Z1block->data[i * Z1block->tda + k] -= eta * Z1update->data[i * Z1update->tda + k];
+			}			
+		}
+
+		// Update Z2 with Gradient Descent
+		for (int k = 0; k < s1; k++)
+		{
+			for (int j = 0; j < s3; j++)
+			{
+				Z2block->data[k * Z1block->tda + j] -= eta * Z2update->data[k * Z2update->tda + j];
+			}
+		}
 
 
     	t2 = MPI_Wtime();
@@ -204,8 +212,8 @@ int main(int argc, char ** argv)
 		if(ee < (MaxIter-1))
 		{
 			// synchronize the updated variables
-			int dest = ??; //the process id of the destination: send it to the previous process
-			int src  = ??; //the process id of the source: recieve it from the next process
+			int dest = (processId + 1) % numBlocks; //the process id of the destination: send it to the previous process
+			int src  = (processId - 1) % numBlocks; //the process id of the source: recieve it from the next process
 			
 
 			// first send/receive some information -- no need to modify
@@ -226,10 +234,10 @@ int main(int argc, char ** argv)
 
 
 			//Now send/receive the Z2 block -- fill in the ??? parts
-			MPI_Sendrecv(???, fact2BlockSize, MPI_DOUBLE,
-	                ???, DSGD_Z2BLOCK,
-	                ???, fact2BlockSize, MPI_DOUBLE,
-	                ???, DSGD_Z2BLOCK,
+			MPI_Sendrecv(Z2block, fact2BlockSize, MPI_DOUBLE,
+	                dest, DSGD_Z2BLOCK,
+	                tempBuf, fact2BlockSize, MPI_DOUBLE,
+	                src, DSGD_Z2BLOCK,
 	                MPI_COMM_WORLD, &st);
 
 			//update the meta info -- no need to modify
@@ -244,8 +252,8 @@ int main(int argc, char ** argv)
 			
 			
 			//form a new part
-			blockI1 = ???
-			blockI2 = ???
+			blockI1 = blockI1;
+			blockI2 = (blockI2 - 1) % numBlocks;
 		}
 		
 		t2 = MPI_Wtime();
@@ -285,10 +293,18 @@ int main(int argc, char ** argv)
 /// Functions to be filled
 
 void initalizeGSLMatrix(gsl_matrix * M, double mult)
-{
-	//((double)rand() / (((double)RAND_MAX)) ) generates a number in between 0 and 1
-
+{	
+	int nrows = M->size1;
+	int ncols = M->size2;
 	
+	for (int i = 0; i < nrows; i++)
+  	{
+  		for (int j = 0; j < ncols; j++)
+  		{
+      		//i and j'th entry of m1			 
+  			M->data[i * M->tda + j] = ((double)rand() / (((double)RAND_MAX)) ) * mult;  			
+  		}
+  	}
 
 }
 
@@ -305,6 +321,11 @@ void computeDivDiff(mtxElm * X, int dataBlockSize, mtxElm * div_term, gsl_matrix
 
 		double curXhat = 0;
 		//Compute the corresponding curXhat
+		for (int k = 0; k < s3; k++) {
+			double z1 = Z1->data[curI1 * Z1->tda + k];
+			double z2 = Z2->data[curI1 * Z1->tda + k];
+			curXhat += z1 * z2;
+		}
         
         div_term[i].i = curI1;
         div_term[i].j = curI2;
@@ -326,7 +347,9 @@ void computeZ2update(mtxElm * div_term, int dataBlockSize, gsl_matrix * Z1, gsl_
 		double curVal = div_term[i].val;
 
 		//Compute Z2update (the gradient wrt Z2)
-
+		for (int k = k; k < s3; k++) {
+			Z2update->data[k * Z2update->tda + curI2] += curVal * Z1->data[curI1 * Z1->tda + k];
+		}
 	}
 
 
@@ -335,7 +358,7 @@ void computeZ2update(mtxElm * div_term, int dataBlockSize, gsl_matrix * Z1, gsl_
 
 void computeZ1update(mtxElm * div_term, int dataBlockSize, gsl_matrix * Z2, gsl_matrix * Z1update)
 {
-	int s3 = Z2->size1;
+	int s3 = Z2->size1;	
 
 	for(int i =0; i<dataBlockSize; i++)
 	{
@@ -344,7 +367,9 @@ void computeZ1update(mtxElm * div_term, int dataBlockSize, gsl_matrix * Z2, gsl_
 		double curVal = div_term[i].val;
 
 		//Compute Z1update (the gradient wrt Z1)
-
+		for (int k = k; k < s3; k++) {
+			Z1update->data[curI1 * Z1update->tda + k] += curVal * Z2->data[k * Z2->tda + curI2];
+		}
 	}
 
 
