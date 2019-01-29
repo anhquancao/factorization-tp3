@@ -1,10 +1,12 @@
 #include <mpi.h>
 
 #include <sstream>
-#include <string>
+#include <string.h>
 #include <time.h>
 #include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
+
 
 #include <gsl/gsl_matrix.h>
 #include <gsl/gsl_rng.h>
@@ -177,16 +179,15 @@ int main(int argc, char ** argv)
 			for (int k = 0; k<s3; k++)
 			{				
 				Z1block->data[i * Z1block->tda + k] -= eta * Z1update->data[i * Z1update->tda + k];
-				// printf("test %d %d %d\n", i, k, s1);
 			}			
 		}		
 
 		// Update Z2 with Gradient Descent
-		for (int k = 0; k < curS1; k++)
+		for (int k = 0; k < s3; k++)
 		{
-			for (int j = 0; j < s3; j++)
+			for (int j = 0; j < curS2; j++)
 			{
-				Z2block->data[k * Z1block->tda + j] -= eta * Z2update->data[k * Z2update->tda + j];
+				Z2block->data[k * Z2block->tda + j] -= eta * Z2update->data[k * Z2update->tda + j];
 			}
 		}		
 
@@ -214,8 +215,8 @@ int main(int argc, char ** argv)
 		if(ee < (MaxIter-1))
 		{
 			// synchronize the updated variables
-			int dest = (processId + 1 + numBlocks) % numBlocks; //the process id of the destination: send it to the previous process
-			int src  = (processId - 1 + numBlocks) % numBlocks; //the process id of the source: recieve it from the next process			
+			int dest = (processId - 1 + numBlocks) % numBlocks; //the process id of the destination: send it to the previous process
+			int src  = (processId + 1 + numBlocks) % numBlocks; //the process id of the source: recieve it from the next process			
 
 			// first send/receive some information -- no need to modify
 			MPI_Status st;
@@ -234,11 +235,21 @@ int main(int argc, char ** argv)
 	                MPI_COMM_WORLD, &st);			
 
 			//Now send/receive the Z2 block -- fill in the ??? parts
-			MPI_Sendrecv(Z2block, fact2BlockSize, MPI_DOUBLE,
+			MPI_Sendrecv(Z2block->data, fact2BlockSize, MPI_DOUBLE,
 	                dest, DSGD_Z2BLOCK,
 	                tempBuf, fact2BlockSize, MPI_DOUBLE,
 	                src, DSGD_Z2BLOCK,
-	                MPI_COMM_WORLD, &st);
+	                MPI_COMM_WORLD, &st);			
+
+			for (int i = 0; i<s3; i++)
+			{
+				for (int j = 0; j<s2; j++)
+				{				
+					Z2block->data[i * Z2block->tda + j] = tempBuf[i * Z2block->tda + j];					
+				}
+			}
+
+			memcpy(Z2block->data, tempBuf, fact2BlockSize);			
 
 			//update the meta info -- no need to modify
 			Z2block->size1 = Z2infoInc[0];
@@ -251,7 +262,7 @@ int main(int argc, char ** argv)
 			
 			//form a new part
 			blockI1 = blockI1;
-			blockI2 = (blockI2 - 1 + numBlocks) % numBlocks;
+			blockI2 = (blockI2 + 1 + numBlocks) % numBlocks;
 		}
 		
 		t2 = MPI_Wtime();
@@ -298,8 +309,9 @@ void initalizeGSLMatrix(gsl_matrix * M, double mult)
   	{
   		for (int j = 0; j < ncols; j++)
   		{
-      		//i and j'th entry of m1			 
-  			M->data[i * M->tda + j] = ((double)rand() / (((double)RAND_MAX)) ) * mult;  			
+      		//i and j'th entry of m1
+			double value = ((double)rand() / (((double)RAND_MAX)) ) * mult;
+  			M->data[i * M->tda + j] = value;  						
   		}
   	}
 
@@ -309,6 +321,7 @@ void initalizeGSLMatrix(gsl_matrix * M, double mult)
 void computeDivDiff(mtxElm * X, int dataBlockSize, mtxElm * div_term, gsl_matrix * Z1, gsl_matrix * Z2)
 {
 	int s3 = Z1->size2;
+	
 
 	for(int i =0; i<dataBlockSize; i++)
 	{
@@ -320,10 +333,9 @@ void computeDivDiff(mtxElm * X, int dataBlockSize, mtxElm * div_term, gsl_matrix
 		//Compute the corresponding curXhat
 		for (int k = 0; k < s3; k++) {
 			double z1 = Z1->data[curI1 * Z1->tda + k];
-			double z2 = Z2->data[curI1 * Z1->tda + k];
+			double z2 = Z2->data[k * Z2->tda + curI2];
 			curXhat += z1 * z2;
-		}
-        
+		}        
         div_term[i].i = curI1;
         div_term[i].j = curI2;
         div_term[i].val = (curXhat-curX);
@@ -355,7 +367,7 @@ void computeZ2update(mtxElm * div_term, int dataBlockSize, gsl_matrix * Z1, gsl_
 
 void computeZ1update(mtxElm * div_term, int dataBlockSize, gsl_matrix * Z2, gsl_matrix * Z1update)
 {
-	int s3 = Z2->size1;	
+	int s3 = Z2->size1;		
 
 	for(int i =0; i<dataBlockSize; i++)
 	{
@@ -363,6 +375,7 @@ void computeZ1update(mtxElm * div_term, int dataBlockSize, gsl_matrix * Z2, gsl_
 		int curI2   = div_term[i].j;
 		double curVal = div_term[i].val;
 
+		
 		//Compute Z1update (the gradient wrt Z1)
 		for (int k = k; k < s3; k++) {
 			Z1update->data[curI1 * Z1update->tda + k] += curVal * Z2->data[k * Z2->tda + curI2];
