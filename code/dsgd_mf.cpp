@@ -247,9 +247,7 @@ int main(int argc, char ** argv)
 				{				
 					Z2block->data[i * Z2block->tda + j] = tempBuf[i * Z2block->tda + j];					
 				}
-			}
-
-			memcpy(Z2block->data, tempBuf, fact2BlockSize);			
+			}			
 
 			//update the meta info -- no need to modify
 			Z2block->size1 = Z2infoInc[0];
@@ -360,8 +358,6 @@ void computeZ2update(mtxElm * div_term, int dataBlockSize, gsl_matrix * Z1, gsl_
 			Z2update->data[k * Z2update->tda + curI2] += curVal * Z1->data[curI1 * Z1->tda + k];
 		}
 	}
-
-
 }
 
 
